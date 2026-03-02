@@ -5,8 +5,9 @@ import Debug from 'debug';
 import http from 'http';
 import { hri } from 'human-readable-ids';
 import Router from 'koa-router';
+import { randomBytes } from 'crypto';
 
-import ClientManager from './lib/ClientManager';
+import ClientManager from './lib/ClientManager.js';
 
 const debug = Debug('localtunnel:server');
 
@@ -27,6 +28,23 @@ export default function(opt) {
 
     const app = new Koa();
     const router = new Router();
+    const authKey = opt.authKey;
+
+    function isUnauthorized(ctx) {
+        if (!authKey) return false;
+        const key = ctx.headers['x-lt-auth'];
+        if (key !== authKey) {
+          ctx.status = 401;
+          ctx.body = { error: 'Unauthorized' };
+          return true;
+        }
+        return false;
+    }
+
+    function generateClientToken() {
+        if (!authKey) return undefined;
+        return randomBytes(32).toString('hex');
+    }
 
     router.get('/api/status', async (ctx, next) => {
         const stats = manager.stats;
@@ -49,7 +67,11 @@ export default function(opt) {
             connected_sockets: stats.connectedSockets,
         };
     });
-
+    
+    app.use((ctx, next) => {
+        if (isUnauthorized(ctx)) return;
+        return next();
+    })
     app.use(router.routes());
     app.use(router.allowedMethods());
 
@@ -65,9 +87,39 @@ export default function(opt) {
 
         const isNewClientRequest = ctx.query['new'] !== undefined;
         if (isNewClientRequest) {
-            const reqId = hri.random();
-            debug('making new client with id %s', reqId);
-            const info = await manager.newClient(reqId);
+            const clientIdHeader = ctx.headers['x-lt-client-id'];
+            let clientId = undefined;
+
+            if (clientIdHeader) {
+                if (manager.getClient(clientIdHeader)) {
+                    ctx.status = 409;
+                    ctx.body = { error: 'Client Id already used' };
+                    return;
+                }
+                clientId = clientIdHeader;
+            } else {
+                let success = false;
+                let limit = 15;
+                let it = 0;
+                while(!success && it < limit) {
+                    clientId = hri.random();
+                    if (!manager.getClient(clientId)) {
+                        success = true;
+                    }
+                }
+
+                if (!success) {
+                    ctx.status = 500;
+                    ctx.body = { error: 'Impossible to generate client id. Try later' };
+                    return;
+                }
+            }
+
+   
+            debug('making new client with id %s', clientId);
+
+            const token =  generateClientToken();
+            const info = await manager.newClient(clientId, token);
 
             const url = schema + '://' + info.id + '.' + ctx.request.host;
             info.url = url;
@@ -79,6 +131,7 @@ export default function(opt) {
         ctx.redirect(landingPage);
     });
 
+    /*
     // anything after the / path is a request for a specific client name
     // This is a backwards compat feature
     app.use(async (ctx, next) => {
@@ -111,7 +164,7 @@ export default function(opt) {
         info.url = url;
         ctx.body = info;
         return;
-    });
+    });*/
 
     const server = http.createServer();
 
