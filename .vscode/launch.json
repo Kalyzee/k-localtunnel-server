@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Localtunnel Server",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/server",
+      "args": [
+        "--port", "3001",
+        "--address", "0.0.0.0",
+        "--domain", "localhost",
+        "--landing", "https://kalyzee.com",
+        "--auth-key", "abcd1234"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "runtimeArgs": []
+    }
+  ]
+}
