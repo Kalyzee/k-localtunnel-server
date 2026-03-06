@@ -17,6 +17,7 @@ export interface TunnelServerOptions {
   landing?: string;
   authKey?: string;
   disableApi?: boolean;
+  uniquePortTcpServer?: number;
 }
 
 export interface TunnelServerInstance {
@@ -134,6 +135,7 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
 
   const requestHandler = (req: IncomingMessage, res: ServerResponse) => {
     const hostname = req.headers.host;
+    debug("Request handler : " + hostname + " method : " + req.method);
     if (!hostname) {
       res.statusCode = 400;
       res.end("Host header is required");

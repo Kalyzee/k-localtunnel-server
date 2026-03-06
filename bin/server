@@ -11,50 +11,75 @@ import { createTunnelInstance } from '../dist/esm/index.js'
 
 const debug = Debug('localtunnel');
 
+
+const getEnvVar = ( env, number = false) => {
+    if (number) {
+        let value = Number(process.env[env]);
+        if (!Number.isNaN(value)) return value;
+        return undefined;
+    }
+    return process.env[env];
+}
+
 const argv = optimist
     .usage('Usage: $0 --port [num]')
     .options('secure', {
-        default: false,
+        default: getEnvVar('SECURE') === "true",
         describe: 'use this flag to indicate proxy over https'
     })
     .options('port', {
-        default: '80',
+        default:  getEnvVar('PORT') ?? '80',
         describe: 'listen on this port for outside requests'
     })
     .options('address', {
-        default: '0.0.0.0',
+        default: getEnvVar('ADDRESS') ?? '0.0.0.0',
         describe: 'IP address to bind to'
     })
     .options('domain', {
+        default: getEnvVar('DOMAIN'),
         describe: 'Specify the base domain name. This is optional if hosting localtunnel from a regular example.com domain. This is required if hosting a localtunnel server from a subdomain (i.e. lt.example.dom where clients will be client-app.lt.example.come)',
     })
     .options('landing', {
+        default: getEnvVar('LANDING'),
         describe: 'Specify the landing page',
     })
     .options('auth-key', {
+        default: getEnvVar('AUTH_KEY'),
         describe: 'Specify the client\'s authentication key. If not defined, no authentication is required.',
     })
     .options('max-sockets', {
-        default: 10,
+        default: getEnvVar('MAX_SOCKETS', true) ?? 2,
         describe: 'maximum number of tcp sockets each client is allowed to establish at one time (the tunnels)'
+    })
+    .options('unique-port-tcp-server', {
+        default: getEnvVar('UNIQUE_PORT_TCP_SERVER', true),
+        describe: 'define a unique port for tcp socket (dynamic port by default)'
     })
     .argv;
 
-if (argv.help) {
+
+if (argv['help'] || getEnvVar('HELP') === true) {
     optimist.showHelp();
     process.exit();
 }
 
-const tunnelInstance = createTunnelInstance({
+const params = {
     max_tcp_sockets: argv['max-sockets'],
     secure: argv.secure,
     domain: argv.domain,
     landing: argv.landing,
     authKey: argv['auth-key'],
-});
+    uniquePortTcpServer: argv['unique-port-tcp-server'],
+};
+debug("Server params : ", JSON.stringify(params, null, 2));
+
+const tunnelInstance = createTunnelInstance(params);
 const server = tunnelInstance.server;
 
-server.listen(argv.port, argv.address, () => {
+const port = argv['port'];
+const address = argv['addresse'];
+debug("Prepare server to listen on : ", port, ' / ', address)
+server.listen(port, address, () => {
     debug('server listening on port: %d', server.address().port);
 });
 

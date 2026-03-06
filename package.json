@@ -31,8 +31,11 @@
     "@types/express": "5.0.6",
     "@types/node": "25.3.3",
     "@types/tldjs": "2.3.4",
+    "compare-versions": "6.1.1",
+    "dotenv": "17.3.1",
     "mocha": "5.1.1",
     "node-dev": "3.1.3",
+    "shelljs": "0.10.0",
     "supertest": "3.1.0",
     "typescript": "5.9.3",
     "ws": "5.1.1"
@@ -42,6 +45,13 @@
     "start": "./bin/server",
     "dev": "node-dev bin/server --port 3000",
     "build": "yarn clean && tsc && cp -R lib dist/esm/lib",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "docker-image-build": "node scripts/docker-image-build.cjs",
+    "docker-image-push": "node scripts/docker-image-push.cjs",
+    "docker-image-build-push": "node scripts/docker-image-build-and-push.cjs",
+    "docker-image-run": "node scripts/docker-image-run.cjs",
+    "db": "yarn docker-image-build",
+    "dp": "yarn docker-image-push",
+    "dbp": "yarn docker-image-build-push"
   }
 }

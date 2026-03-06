@@ -1,13 +1,38 @@
-FROM node:10.1.0-alpine
+# ---------- STAGE 1 : BUILD ----------
+FROM node:20 AS builder
 
+# Création du répertoire de travail
 WORKDIR /app
 
-COPY package.json /app/
-COPY yarn.lock /app/
+# Copier uniquement package.json et yarn.lock pour installer les deps
+COPY package.json yarn.lock ./
 
-RUN yarn install --production && yarn cache clean
+# Installer toutes les dépendances (dev + prod) pour builder
+RUN yarn install
 
-COPY . /app
+# Copier tout le code source (TS + JS)
+COPY . .
 
-ENV NODE_ENV production
-ENTRYPOINT ["node", "-r", "esm", "./bin/server"]
+# Installer TypeScript globalement pour s'assurer que 'tsc' est disponible
+RUN yarn add typescript --dev
+
+# Builder le projet
+RUN yarn build
+
+# ---------- STAGE 2 : IMAGE FINALE ----------
+FROM node:20
+
+# Créer le répertoire de travail
+WORKDIR /app
+
+# Copier uniquement les fichiers buildés depuis le stage builder
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/lib ./lib
+COPY --from=builder /app/bin ./bin
+
+# Installer uniquement les dépendances de production
+RUN yarn install --production --frozen-lockfile && yarn cache clean
+
+# Commande par défaut
+CMD ["node", "./bin/server"]

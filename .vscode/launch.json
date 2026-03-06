@@ -11,7 +11,8 @@
         "--address", "0.0.0.0",
         "--domain", "localhost",
         "--landing", "https://kalyzee.com",
-        "--auth-key", "abcd1234"
+        "--auth-key", "abcd1234",
+        "--unique-port-tcp-server", "4321"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
