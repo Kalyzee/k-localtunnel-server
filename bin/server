@@ -47,6 +47,18 @@ const argv = optimist
         default: getEnvVar('AUTH_KEY'),
         describe: 'Specify the client\'s authentication key. If not defined, no authentication is required.',
     })
+    .options('admin-username', {
+        default: getEnvVar('ADMIN_USERNAME'),
+        describe: 'Username for admin interface (Basic Auth). If not defined, no admin authentication is required.',
+    })
+    .options('admin-password', {
+        default: getEnvVar('ADMIN_PASSWORD'),
+        describe: 'Password for admin interface (Basic Auth). If not defined, no admin authentication is required.',
+    })
+    .options('default-filters', {
+        default: getEnvVar('DEFAULT_FILTERS') ?? '[{"pattern":".*","authorized":true}]',
+        describe: 'JSON array of default authorization filters. Example: \'[{"pattern":"^device-.*$","authorized":true}]\'. First match wins.',
+    })
     .options('max-sockets', {
         default: getEnvVar('MAX_SOCKETS', true) ?? 2,
         describe: 'maximum number of tcp sockets each client is allowed to establish at one time (the tunnels)'
@@ -69,6 +81,9 @@ const params = {
     domain: argv.domain,
     landing: argv.landing,
     authKey: argv['auth-key'],
+    adminUsername: argv['admin-username'],
+    adminPassword: argv['admin-password'],
+    defaultFilters: argv['default-filters'] ? JSON.parse(argv['default-filters']) : undefined,
     uniquePortTcpServer: argv['unique-port-tcp-server'],
 };
 debug("Server params : ", JSON.stringify(params, null, 2));

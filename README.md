@@ -1,70 +1,236 @@
-# localtunnel-server
+# k-localtunnel-server
 
-[![Build Status](https://travis-ci.org/localtunnel/server.svg?branch=master)](https://travis-ci.org/localtunnel/server)
+Serveur de tunnel auto-heberge permettant d'exposer des services locaux sur internet via des sous-domaines. Les clients se connectent au serveur pour ouvrir un tunnel TCP, et sont accessibles depuis l'exterieur sur `<id>.tunnel.exemple.com`.
 
-localtunnel exposes your localhost to the world for easy testing and sharing! No need to mess with DNS or deploy just to have others test out your changes.
+Le serveur integre un systeme d'autorisation par filtres regex, une interface d'administration web, et un mecanisme SSE pour controler en temps reel quels clients sont autorises a se connecter.
 
-This repo is the server component. If you are just looking for the CLI localtunnel app, see (https://github.com/localtunnel/localtunnel).
+## Prerequis
 
-## overview ##
+- Node.js >= 18
+- Yarn
+- Un domaine avec un wildcard DNS (`*.tunnel.example.com`) pointant vers le serveur
 
-The default localtunnel client connects to the `localtunnel.me` server. You can, however, easily set up and run your own server. In order to run your own localtunnel server you must ensure that your server can meet the following requirements:
+## Installation
 
-* You can set up DNS entries for your `domain.tld` and `*.domain.tld` (or `sub.domain.tld` and `*.sub.domain.tld`).
-* The server can accept incoming TCP connections for any non-root TCP port (i.e. ports over 1000).
-
-The above are important as the client will ask the server for a subdomain under a particular domain. The server will listen on any OS-assigned TCP port for client connections.
-
-#### setup
-
-```shell
-# pick a place where the files will live
-git clone git://github.com/defunctzombie/localtunnel-server.git
-cd localtunnel-server
-npm install
-
-# server set to run on port 1234
-bin/server --port 1234
+```bash
+git clone https://github.com/Kalyzee/k-localtunnel-server.git
+cd k-localtunnel-server
+yarn install
+yarn build
 ```
 
-The localtunnel server is now running and waiting for client requests on port 1234. You will most likely want to set up a reverse proxy to listen on port 80 (or start localtunnel on port 80 directly).
+## Demarrage
 
-**NOTE** By default, localtunnel will use subdomains for clients, if you plan to host your localtunnel server itself on a subdomain you will need to use the _--domain_ option and specify the domain name behind which you are hosting localtunnel. (i.e. my-localtunnel-server.example.com)
+```bash
+# Demarrage simple
+yarn start --port 3000 --domain tunnel.exemple.com
 
-#### use your server
+# Demarrage avec toutes les options
+yarn start \
+  --port 3000 \
+  --domain tunnel.exemple.com \
+  --secure \
+  --auth-key "ma-cle-client" \
+  --admin-username admin \
+  --admin-password secret \
+  --default-filters '[{"pattern":"^device-","authorized":true,"priority":10}]' \
+  --max-sockets 5
 
-You can now use your domain with the `--host` flag for the `lt` client.
-
-```shell
-lt --host http://sub.example.tld:1234 --port 9000
+# Mode developpement (hot-reload)
+yarn dev
 ```
 
-You will be assigned a URL similar to `heavy-puma-9.sub.example.com:1234`.
+## Configuration
 
-If your server is acting as a reverse proxy (i.e. nginx) and is able to listen on port 80, then you do not need the `:1234` part of the hostname for the `lt` client.
+Toutes les options sont disponibles en CLI (`--option`) ou en variable d'environnement.
 
-## REST API
+| CLI | Env | Default | Description |
+|-----|-----|---------|-------------|
+| `--port` | `PORT` | `80` | Port d'ecoute du serveur |
+| `--address` | `ADDRESS` | `0.0.0.0` | Adresse IP de bind |
+| `--domain` | `DOMAIN` | - | Domaine de base (requis pour le routage par sous-domaine) |
+| `--secure` | `SECURE` | `false` | Indique que le serveur est derriere un proxy HTTPS |
+| `--landing` | `LANDING` | - | URL de redirection pour la page d'accueil |
+| `--auth-key` | `AUTH_KEY` | - | Cle d'authentification pour les clients. Si non definie, pas d'auth requise |
+| `--admin-username` | `ADMIN_USERNAME` | - | Nom d'utilisateur pour l'interface admin (Basic Auth) |
+| `--admin-password` | `ADMIN_PASSWORD` | - | Mot de passe pour l'interface admin (Basic Auth) |
+| `--default-filters` | `DEFAULT_FILTERS` | - | Filtres d'autorisation par defaut (JSON, voir ci-dessous) |
+| `--max-sockets` | `MAX_SOCKETS` | `2` | Nombre maximum de sockets TCP par client |
+| `--unique-port-tcp-server` | `UNIQUE_PORT_TCP_SERVER` | - | Port TCP unique partage (port dynamique par defaut) |
 
-### POST /api/tunnels
+## Systeme d'autorisation
 
-Create a new tunnel. A LocalTunnel client posts to this enpoint to request a new tunnel with a specific name or a randomly assigned name.
+L'autorisation des tunnels repose sur des **filtres regex avec priorite**. Quand un client demande a ouvrir un tunnel, son ID est teste contre les filtres. Le premier filtre qui matche (priorite la plus haute en premier) determine si l'acces est autorise ou refuse. Si aucun filtre ne matche, l'acces est refuse.
 
-### GET /api/status
+### Filtres par defaut
 
-General server information.
+Definis au demarrage via `--default-filters` ou `DEFAULT_FILTERS` :
 
-## Deploy
+```bash
+# Autoriser tous les IDs commencant par "device-", refuser le reste
+DEFAULT_FILTERS='[
+  {"pattern": "^device-", "authorized": true, "priority": 10},
+  {"pattern": ".*", "authorized": false, "priority": 0}
+]'
 
-You can deploy your own localtunnel server using the prebuilt docker image.
+# Autoriser tout le monde
+DEFAULT_FILTERS='[{"pattern": ".*", "authorized": true}]'
+```
 
-**Note** This assumes that you have a proxy in front of the server to handle the http(s) requests and forward them to the localtunnel server on port 3000. You can use our [localtunnel-nginx](https://github.com/localtunnel/nginx) to accomplish this.
+Chaque filtre contient :
+- `pattern` : expression reguliere testee contre l'ID du tunnel
+- `authorized` : `true` pour autoriser, `false` pour refuser
+- `priority` (optionnel, defaut `0`) : plus la valeur est grande, plus le filtre est evalue en premier. Supporte les decimaux.
 
-If you do not want ssl support for your own tunnel (not recommended), then you can just run the below with `--port 80` instead.
+### Gestion dynamique via API
+
+Les filtres peuvent etre ajoutes, modifies et supprimes a chaud via l'API admin. Toute modification re-evalue immediatement tous les tunnels connectes : si un tunnel actif n'est plus autorise, il est coupe cote serveur.
+
+## Interface d'administration
+
+Accessible sur `/admin`, protegee par Basic Auth (`admin-username` / `admin-password`).
+
+Fonctionnalites :
+- **Filtres** : voir, ajouter, modifier (pattern, priorite, allow/deny), supprimer les filtres d'autorisation. Priorite et pattern editables en cliquant dessus.
+- **Tunnels** : voir en temps reel (polling 2s) les tunnels en attente/connectes avec leur ID, URL, statut d'autorisation, statut de connexion et nombre de sockets TCP ouvertes.
+
+## Flux de connexion
 
 ```
+1. Le client se connecte en SSE au serveur avec ses IDs
+   GET /api/sse?ids=device-1,device-2
+   Header: x-lt-auth: <auth-key>
+
+2. Le serveur evalue chaque ID contre les filtres
+   et envoie un event SSE pour chaque ID :
+   data: {"id":"device-1","authorized":true}
+   data: {"id":"device-2","authorized":false}
+
+3. Pour les IDs autorises, le client demande l'ouverture du tunnel :
+   GET /?new
+   Header: x-lt-client-id: device-1
+
+4. Le serveur verifie l'autorisation, cree le tunnel
+   et retourne les informations de connexion TCP
+
+5. Le client ouvre les sockets TCP vers le serveur
+   et le tunnel est actif sur https://device-1.tunnel.kalyzee.com
+
+6. Si un admin modifie un filtre (via /admin ou API),
+   les IDs sont re-evalues en temps reel :
+   - Nouvelle autorisation → event SSE authorized:true
+   - Revocation → event SSE authorized:false + tunnel coupe cote serveur
+```
+
+## API REST
+
+### Endpoints client (proteges par `x-lt-auth`)
+
+| Methode | Endpoint | Description |
+|---------|----------|-------------|
+| `GET` | `/?new` | Creer un nouveau tunnel. Header `x-lt-client-id` pour specifier l'ID |
+| `GET` | `/api/sse?ids=id1,id2` | Connexion SSE pour recevoir les events d'autorisation |
+
+### Endpoints admin (proteges par Basic Auth)
+
+| Methode | Endpoint | Description |
+|---------|----------|-------------|
+| `GET` | `/admin` | Interface d'administration web |
+| `GET` | `/api/filters` | Lister tous les filtres (tries par priorite) |
+| `POST` | `/api/filters` | Ajouter un filtre `{pattern, authorized, priority}` |
+| `PUT` | `/api/filters/:id` | Modifier un filtre `{pattern?, authorized?, priority?}` |
+| `DELETE` | `/api/filters/:id` | Supprimer un filtre |
+| `GET` | `/api/tunnels/pending` | Lister les tunnels connectes en SSE avec leur statut |
+
+### Exemples curl
+
+```bash
+# Lister les filtres
+curl -u admin:secret https://tunnel.exemple.com/api/filters
+
+# Ajouter un filtre
+curl -u admin:secret -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"pattern":"^test-","authorized":true,"priority":50}' \
+  https://tunnel.exemple.com/api/filters
+
+# Modifier un filtre (ex: changer la priorite)
+curl -u admin:secret -X PUT \
+  -H "Content-Type: application/json" \
+  -d '{"priority":99.5}' \
+  https://tunnel.exemple.com/api/filters/1
+
+# Supprimer un filtre
+curl -u admin:secret -X DELETE \
+  https://tunnel.exemple.com/api/filters/1
+
+# Voir les tunnels en attente
+curl -u admin:secret https://tunnel.exemple.com/api/tunnels/pending
+```
+
+## Docker
+
+### Build
+
+```bash
+yarn docker-image-build
+# ou
+docker build -t k-localtunnel-server .
+```
+
+### Run
+
+```bash
 docker run -d \
-    --restart always \
-    --name localtunnel \
-    --net host \
-    defunctzombie/localtunnel-server:latest --port 3000
+  --restart always \
+  --name localtunnel \
+  --net host \
+  -e PORT=3000 \
+  -e DOMAIN=tunnel.exemple.com \
+  -e SECURE=true \
+  -e AUTH_KEY=ma-cle-client \
+  -e ADMIN_USERNAME=admin \
+  -e ADMIN_PASSWORD=secret \
+  -e DEFAULT_FILTERS='[{"pattern":".*","authorized":true}]' \
+  k-localtunnel-server
 ```
+
+## Utilisation programmatique
+
+```js
+import { createTunnelInstance } from 'k-localtunnel-server';
+
+const { server, getClients } = createTunnelInstance({
+  domain: 'tunnel.exemple.com',
+  secure: true,
+  authKey: 'ma-cle-client',
+  adminUsername: 'admin',
+  adminPassword: 'secret',
+  maxTcpSockets: 10,
+  defaultFilters: [
+    { pattern: '^device-', authorized: true, priority: 10 },
+    { pattern: '.*', authorized: false, priority: 0 },
+  ],
+});
+
+server.listen(3000, () => {
+  console.log('Tunnel server listening on port 3000');
+});
+```
+
+## Scripts
+
+| Script | Description |
+|--------|-------------|
+| `yarn start` | Demarrer le serveur |
+| `yarn dev` | Demarrer en mode developpement (hot-reload) |
+| `yarn build` | Compiler le TypeScript |
+| `yarn clean` | Supprimer le dossier `dist/` |
+| `yarn test` | Lancer les tests |
+| `yarn docker-image-build` | Build l'image Docker |
+| `yarn docker-image-push` | Push l'image Docker |
+| `yarn docker-image-build-push` | Build + push |
+
+## Licence
+
+MIT

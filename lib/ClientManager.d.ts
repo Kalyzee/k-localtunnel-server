@@ -24,5 +24,7 @@ export default class ClientManager {
   stats: { tunnels: number };
   clients: Mat<string, Client>;
   getClient(id: string): Client | undefined;
+  hasClient(id: string): boolean;
+  removeClient(id: string): void;
   newClient(id: string, token?: string): Promise<ClientInfo>;
 }
