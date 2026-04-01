@@ -12,6 +12,8 @@
         "--domain", "localhost",
         "--landing", "https://kalyzee.com",
         "--auth-key", "abcd1234",
+        "--admin-username", "abcd",
+        "--admin-password", "abcd",
         "--unique-port-tcp-server", "4321"
       ],
       "cwd": "${workspaceFolder}",

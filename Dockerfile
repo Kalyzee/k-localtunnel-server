@@ -13,9 +13,6 @@ RUN yarn install
 # Copier tout le code source (TS + JS)
 COPY . .
 
-# Installer TypeScript globalement pour s'assurer que 'tsc' est disponible
-RUN yarn add typescript --dev
-
 # Builder le projet
 RUN yarn build
 

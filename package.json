@@ -43,7 +43,7 @@
   "scripts": {
     "test": "mocha --check-leaks --require esm './**/*.test.js'",
     "start": "./bin/server",
-    "dev": "node-dev bin/server --port 3000",
+    "dev": "node-dev bin/server --port 3333",
     "build": "yarn clean && tsc && cp -R lib dist/esm/lib",
     "clean": "rm -rf dist",
     "docker-image-build": "node scripts/docker-image-build.cjs",
