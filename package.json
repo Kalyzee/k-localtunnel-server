@@ -2,7 +2,7 @@
   "author": "Roman Shtylman <shtylman@gmail.com>",
   "name": "@kalyzee/k-localtunnel-server",
   "description": "A self-hosted LocalTunnel server for exposing local Node.js servers to the internet. Supports optional authentication via authKey for secure tunnels.",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "license": "MIT",
   "repository": {
     "type": "git",
