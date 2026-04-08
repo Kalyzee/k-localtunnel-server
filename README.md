@@ -59,8 +59,13 @@ Toutes les options sont disponibles en CLI (`--option`) ou en variable d'environ
 | `--admin-username` | `ADMIN_USERNAME` | - | Nom d'utilisateur pour l'interface admin (Basic Auth) |
 | `--admin-password` | `ADMIN_PASSWORD` | - | Mot de passe pour l'interface admin (Basic Auth) |
 | `--default-filters` | `DEFAULT_FILTERS` | - | Filtres d'autorisation par defaut (JSON, voir ci-dessous) |
-| `--max-sockets` | `MAX_SOCKETS` | `2` | Nombre maximum de sockets TCP par client |
+| `--max-sockets` | `MAX_SOCKETS` | `10` | Nombre maximum de sockets par client (fallback global) |
+| `--max-http-sockets` | `MAX_HTTP_SOCKETS` | - | Limite de sockets pour les tunnels HTTP (sinon `max-sockets`) |
+| `--max-tcp-sockets` | `MAX_TCP_SOCKETS` | - | Limite de sockets pour les tunnels TCP (sinon `max-sockets`) |
+| `--max-udp-sockets` | `MAX_UDP_SOCKETS` | - | Limite de sockets pour les tunnels UDP (sinon `max-sockets`) |
 | `--unique-port-tcp-server` | `UNIQUE_PORT_TCP_SERVER` | - | Port TCP unique partage (port dynamique par defaut) |
+
+Le client peut aussi demander une limite via le parametre `max_conn` dans le handshake. La valeur effective est le minimum entre la demande du client et la limite serveur pour le type concerne.
 
 ## Types de tunnel
 
@@ -120,7 +125,7 @@ Accessible sur `/admin`, protegee par Basic Auth (`admin-username` / `admin-pass
 
 Fonctionnalites :
 - **Filtres** : voir, ajouter, modifier (pattern, priorite, allow/deny), supprimer les filtres d'autorisation. Priorite et pattern editables en cliquant dessus.
-- **Tunnels** : voir en temps reel (polling 2s) les tunnels en attente/connectes avec leur ID, endpoint, target locale, type (HTTP/TCP/UDP), statut d'autorisation, statut de connexion et nombre de sockets. Pour les tunnels TCP : connexions externes/sockets. Pour les tunnels UDP : sessions actives/sockets.
+- **Tunnels** : voir en temps reel (polling 2s) les tunnels en attente/connectes avec leur ID, endpoint, target locale, type (HTTP/TCP/UDP), statut d'autorisation, statut de connexion et nombre de sockets. Pour les tunnels TCP : connexions externes/sockets. Pour les tunnels UDP : sessions actives/sockets. Un champ de filtre regex permet de rechercher par ID, avec un compteur affiche/total.
 
 ## Flux de connexion
 

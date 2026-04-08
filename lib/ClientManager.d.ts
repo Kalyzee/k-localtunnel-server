@@ -31,5 +31,5 @@ export default class ClientManager {
   getClient(id: string): Client | undefined;
   hasClient(id: string): boolean;
   removeClient(id: string): void;
-  newClient(id: string, token?: string, type?: 'http' | 'tcp' | 'udp', requestedPublicPort?: number, target?: string): Promise<ClientInfo>;
+  newClient(id: string, token?: string, type?: 'http' | 'tcp' | 'udp', requestedPublicPort?: number, target?: string, requestedMaxConn?: number): Promise<ClientInfo>;
 }

@@ -14,7 +14,10 @@
         "--auth-key", "abcd1234",
         "--admin-username", "abcd",
         "--admin-password", "abcd",
-        "--unique-port-tcp-server", "4321"
+        "--unique-port-tcp-server", "4321",
+        "--max-sockets", "10",
+        "--max-tcp-sockets", "15",
+        "--max-udp-sockets", "15",
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

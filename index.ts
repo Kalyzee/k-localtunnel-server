@@ -19,6 +19,9 @@ export interface AuthFilterConfig {
 
 export interface TunnelServerOptions {
   maxTcpSockets?: number;
+  maxHttpSockets?: number;
+  maxTcpTunnelSockets?: number;
+  maxUdpSockets?: number;
   domain?: string;
   secure?: boolean;
   landing?: string;
@@ -430,12 +433,15 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
     }
 
     const target = req.headers["x-lt-target"] as string | undefined;
+    const requestedMaxConn = req.query["max_conn"]
+      ? parseInt(req.query["max_conn"] as string, 10)
+      : undefined;
 
     debug("Creating new client %s (type=%s, target=%s)", clientId, tunnelType, target);
 
     try {
       const token = generateClientToken();
-      const info = await manager.newClient(clientId, token, tunnelType, requestedPublicPort, target);
+      const info = await manager.newClient(clientId, token, tunnelType, requestedPublicPort, target, requestedMaxConn);
       if (tunnelType === "http") {
         info.url = `${schema}://${info.id}.${req.headers.host}`;
       }

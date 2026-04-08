@@ -60,8 +60,20 @@ const argv = optimist
         describe: 'JSON array of default authorization filters. Example: \'[{"pattern":"^device-.*$","authorized":true}]\'. First match wins.',
     })
     .options('max-sockets', {
-        default: getEnvVar('MAX_SOCKETS', true) ?? 2,
-        describe: 'maximum number of tcp sockets each client is allowed to establish at one time (the tunnels)'
+        default: getEnvVar('MAX_SOCKETS', true),
+        describe: 'default maximum number of sockets per client (fallback for all types)'
+    })
+    .options('max-http-sockets', {
+        default: getEnvVar('MAX_HTTP_SOCKETS', true),
+        describe: 'maximum sockets for HTTP tunnels (defaults to max-sockets)'
+    })
+    .options('max-tcp-sockets', {
+        default: getEnvVar('MAX_TCP_SOCKETS', true),
+        describe: 'maximum sockets for TCP tunnels (defaults to max-sockets)'
+    })
+    .options('max-udp-sockets', {
+        default: getEnvVar('MAX_UDP_SOCKETS', true),
+        describe: 'maximum sockets for UDP tunnels (defaults to max-sockets)'
     })
     .options('unique-port-tcp-server', {
         default: getEnvVar('UNIQUE_PORT_TCP_SERVER', true),
@@ -76,7 +88,10 @@ if (argv['help'] || getEnvVar('HELP') === true) {
 }
 
 const params = {
-    max_tcp_sockets: argv['max-sockets'],
+    max_sockets: argv['max-sockets'],
+    max_http_sockets: argv['max-http-sockets'],
+    max_tcp_sockets: argv['max-tcp-sockets'],
+    max_udp_sockets: argv['max-udp-sockets'],
     secure: argv.secure,
     domain: argv.domain,
     landing: argv.landing,
