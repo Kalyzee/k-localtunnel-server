@@ -265,9 +265,9 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
       const connected = !!client;
       let endpoint = '-';
       if (connected) {
-        if (type === 'tcp' && client?.publicPort) {
+        if ((type === 'tcp' || type === 'udp') && client?.publicPort) {
           const host = options.domain || req.headers.host?.split(':')[0] || 'localhost';
-          endpoint = `tcp://${host}:${client.publicPort}`;
+          endpoint = `${type}://${host}:${client.publicPort}`;
         } else if (type === 'http') {
           endpoint = `${schema}://${p.id}.${req.headers.host}`;
         }
@@ -282,6 +282,7 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
         connected,
         connectedSockets: stats ? stats.connectedSockets : 0,
         activeExternalConnections: stats?.activeExternalConnections ?? undefined,
+        activeSessions: stats?.activeSessions ?? undefined,
       };
     });
     res.json(result);
@@ -414,17 +415,17 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
     }
 
     const tunnelType = (req.query["type"] as string) || (req.headers["x-lt-type"] as string) || "http";
-    if (tunnelType !== "http" && tunnelType !== "tcp") {
-      res.status(400).json({ error: "Invalid tunnel type. Must be 'http' or 'tcp'" });
+    if (tunnelType !== "http" && tunnelType !== "tcp" && tunnelType !== "udp") {
+      res.status(400).json({ error: "Invalid tunnel type. Must be 'http', 'tcp', or 'udp'" });
       return;
     }
 
-    const requestedTcpPort = req.query["tcp_port"]
-      ? parseInt(req.query["tcp_port"] as string, 10)
+    const requestedPublicPort = req.query["tcp_port"] || req.query["udp_port"]
+      ? parseInt((req.query["tcp_port"] || req.query["udp_port"]) as string, 10)
       : undefined;
 
-    if (requestedTcpPort !== undefined && isNaN(requestedTcpPort)) {
-      res.status(400).json({ error: "Invalid tcp_port parameter" });
+    if (requestedPublicPort !== undefined && isNaN(requestedPublicPort)) {
+      res.status(400).json({ error: "Invalid port parameter" });
       return;
     }
 
@@ -434,7 +435,7 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
 
     try {
       const token = generateClientToken();
-      const info = await manager.newClient(clientId, token, tunnelType, requestedTcpPort, target);
+      const info = await manager.newClient(clientId, token, tunnelType, requestedPublicPort, target);
       if (tunnelType === "http") {
         info.url = `${schema}://${info.id}.${req.headers.host}`;
       }
@@ -473,6 +474,12 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
     if (client.type === 'tcp') {
       res.statusCode = 400;
       res.end("This tunnel is TCP-only. Connect via TCP to the assigned public port.");
+      return;
+    }
+
+    if (client.type === 'udp') {
+      res.statusCode = 400;
+      res.end("This tunnel is UDP-only. Send UDP datagrams to the assigned public port.");
       return;
     }
 

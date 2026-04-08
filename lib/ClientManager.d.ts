@@ -10,18 +10,18 @@ export interface ClientManagerOptions {
 export interface ClientInfo {
   id: string;
   url: string;
-  type: 'http' | 'tcp';
+  type: 'http' | 'tcp' | 'udp';
   public_port?: number;
   [key: string]: any;
 }
 
 export interface Client {
-  type: 'http' | 'tcp';
+  type: 'http' | 'tcp' | 'udp';
   publicPort: number | null;
   target: string | null;
   handleRequest(req: any, res: any): void;
   handleUpgrade(req: any, socket: any, head?: any): void;
-  stats(): { connectedSockets: number; activeExternalConnections?: number };
+  stats(): { connectedSockets: number; activeExternalConnections?: number; activeSessions?: number };
 }
 
 export default class ClientManager {
@@ -31,5 +31,5 @@ export default class ClientManager {
   getClient(id: string): Client | undefined;
   hasClient(id: string): boolean;
   removeClient(id: string): void;
-  newClient(id: string, token?: string, type?: 'http' | 'tcp', requestedPublicPort?: number, target?: string): Promise<ClientInfo>;
+  newClient(id: string, token?: string, type?: 'http' | 'tcp' | 'udp', requestedPublicPort?: number, target?: string): Promise<ClientInfo>;
 }
