@@ -1,8 +1,12 @@
 # k-localtunnel-server
 
-Serveur de tunnel auto-heberge permettant d'exposer des services locaux sur internet via des sous-domaines. Les clients se connectent au serveur pour ouvrir un tunnel TCP, et sont accessibles depuis l'exterieur sur `<id>.tunnel.exemple.com`.
+Serveur de tunnel auto-heberge permettant d'exposer des services locaux sur internet. Supporte trois modes de tunneling :
 
-Le serveur integre un systeme d'autorisation par filtres regex, une interface d'administration web, et un mecanisme SSE pour controler en temps reel quels clients sont autorises a se connecter.
+- **HTTP** : accessible via sous-domaine `<id>.tunnel.exemple.com`
+- **TCP** : accessible via un port TCP public assigne
+- **UDP** : accessible via un port UDP public assigne, avec framing par session
+
+Les clients se connectent au serveur, et le serveur integre un systeme d'autorisation par filtres regex, une interface d'administration web, et un mecanisme SSE pour controler en temps reel quels clients sont autorises a se connecter.
 
 ## Prerequis
 
@@ -58,6 +62,30 @@ Toutes les options sont disponibles en CLI (`--option`) ou en variable d'environ
 | `--max-sockets` | `MAX_SOCKETS` | `2` | Nombre maximum de sockets TCP par client |
 | `--unique-port-tcp-server` | `UNIQUE_PORT_TCP_SERVER` | - | Port TCP unique partage (port dynamique par defaut) |
 
+## Types de tunnel
+
+### HTTP (defaut)
+
+Le client expose un service HTTP local. Le tunnel est accessible via un sous-domaine :
+- Acces externe : `https://device-1.tunnel.exemple.com`
+- Les sockets du pool sont recyclees apres chaque requete HTTP
+
+### TCP
+
+Le client expose un service TCP local (base de donnees, serveur custom, etc.). Le serveur ouvre un port TCP public :
+- Acces externe : `tcp://tunnel.exemple.com:25000`
+- Chaque connexion externe consomme une socket du pool pour toute sa duree
+- Le port peut etre specifie par le client (`tcp_port`) ou assigne automatiquement par l'OS
+
+### UDP
+
+Le client expose un service UDP local (DNS, jeu, streaming, etc.). Le serveur ouvre un port UDP public :
+- Acces externe : `udp://tunnel.exemple.com:25000`
+- Les datagrams sont encapsules dans un protocole de framing sur le tunnel TCP : `[type:1][headerLen:2][payloadLen:2][header JSON][payload]`
+- Chaque source IP:port externe cree une "session" qui consomme une socket du pool
+- Les sessions expirent apres 30 secondes d'inactivite
+- Le port peut etre specifie par le client (`udp_port`) ou assigne automatiquement par l'OS
+
 ## Systeme d'autorisation
 
 L'autorisation des tunnels repose sur des **filtres regex avec priorite**. Quand un client demande a ouvrir un tunnel, son ID est teste contre les filtres. Le premier filtre qui matche (priorite la plus haute en premier) determine si l'acces est autorise ou refuse. Si aucun filtre ne matche, l'acces est refuse.
@@ -92,7 +120,7 @@ Accessible sur `/admin`, protegee par Basic Auth (`admin-username` / `admin-pass
 
 Fonctionnalites :
 - **Filtres** : voir, ajouter, modifier (pattern, priorite, allow/deny), supprimer les filtres d'autorisation. Priorite et pattern editables en cliquant dessus.
-- **Tunnels** : voir en temps reel (polling 2s) les tunnels en attente/connectes avec leur ID, URL, statut d'autorisation, statut de connexion et nombre de sockets TCP ouvertes.
+- **Tunnels** : voir en temps reel (polling 2s) les tunnels en attente/connectes avec leur ID, endpoint, target locale, type (HTTP/TCP/UDP), statut d'autorisation, statut de connexion et nombre de sockets. Pour les tunnels TCP : connexions externes/sockets. Pour les tunnels UDP : sessions actives/sockets.
 
 ## Flux de connexion
 
@@ -114,7 +142,9 @@ Fonctionnalites :
    et retourne les informations de connexion TCP
 
 5. Le client ouvre les sockets TCP vers le serveur
-   et le tunnel est actif sur https://device-1.tunnel.kalyzee.com
+   - HTTP : accessible sur https://device-1.tunnel.exemple.com
+   - TCP : accessible sur tcp://tunnel.exemple.com:<port>
+   - UDP : accessible sur udp://tunnel.exemple.com:<port>
 
 6. Si un admin modifie un filtre (via /admin ou API),
    les IDs sont re-evalues en temps reel :
@@ -128,7 +158,9 @@ Fonctionnalites :
 
 | Methode | Endpoint | Description |
 |---------|----------|-------------|
-| `GET` | `/?new` | Creer un nouveau tunnel. Header `x-lt-client-id` pour specifier l'ID |
+| `GET` | `/?new` | Creer un tunnel HTTP. Header `x-lt-client-id` pour specifier l'ID |
+| `GET` | `/?new&type=tcp&tcp_port=25000` | Creer un tunnel TCP (port optionnel) |
+| `GET` | `/?new&type=udp&udp_port=25000` | Creer un tunnel UDP (port optionnel) |
 | `GET` | `/api/sse?ids=id1,id2` | Connexion SSE pour recevoir les events d'autorisation |
 
 ### Endpoints admin (proteges par Basic Auth)
