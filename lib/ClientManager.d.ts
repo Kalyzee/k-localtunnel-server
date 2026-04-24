@@ -3,7 +3,6 @@ export interface ClientManagerOptions {
   domain?: string;
   secure?: boolean;
   landing?: string;
-  authKey?: string;
   [key: string]: any;
 }
 

@@ -6,8 +6,11 @@ import http from "http";
 import { hri } from "human-readable-ids";
 import type { Socket } from "net";
 import tldjs from "tldjs";
+import ApiKeyStore from "./lib/ApiKeyStore.js";
 import ClientManager from "./lib/ClientManager.js";
+import FilterStore from "./lib/FilterStore.js";
 import getAdminHtml from "./lib/adminHtml.js";
+import { connectMongo } from "./lib/mongo.js";
 
 const debug = Debug("localtunnel:server");
 
@@ -25,7 +28,10 @@ export interface TunnelServerOptions {
   domain?: string;
   secure?: boolean;
   landing?: string;
-  authKey?: string;
+  /** When true, API keys are required (via `x-lt-auth` header) and `mongoUri` must be provided. */
+  authRequired?: boolean;
+  /** MongoDB connection string for the API key store. Required when `authRequired` is true. */
+  mongoUri?: string;
   adminUsername?: string;
   adminPassword?: string;
   disableApi?: boolean;
@@ -36,14 +42,12 @@ export interface TunnelServerOptions {
 export interface TunnelServerInstance {
   server: http.Server<typeof IncomingMessage, typeof ServerResponse>;
   getClients(): string[];
-}
-
-interface AuthFilter {
-  id: string;
-  pattern: string;
-  regex: RegExp;
-  authorized: boolean;
-  priority: number;
+  /** Present when `authRequired` is true. */
+  apiKeyStore: ApiKeyStore | null;
+  /** Always present — uses Mongo if `mongoUri` is set, otherwise in-memory. */
+  filterStore: FilterStore;
+  /** Must be awaited before `server.listen()`. Connects to Mongo (if needed) and initializes stores. */
+  ready(): Promise<void>;
 }
 
 interface SseClient {
@@ -67,39 +71,30 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
 
   const manager = new ClientManager(options);
 
-  // --- Filter-based authorization system ---
-  let filterIdCounter = 0;
-  const filters: AuthFilter[] = [];
-
-  // Load default filters from options
-  if (options.defaultFilters) {
-    for (const f of options.defaultFilters) {
-      filters.push({
-        id: String(++filterIdCounter),
-        pattern: f.pattern,
-        regex: new RegExp(f.pattern),
-        authorized: f.authorized,
-        priority: f.priority ?? 0,
-      });
+  // API key store — instantiated only when authentication is enabled.
+  // The caller (bin/server) is responsible for awaiting `.connect(mongoUri)` before
+  // starting to listen, so the first request sees a ready store.
+  let apiKeyStore: ApiKeyStore | null = null;
+  if (options.authRequired) {
+    if (!options.mongoUri) {
+      throw new Error("authRequired=true requires mongoUri to be set");
     }
-    debug("Loaded %d default filters", filters.length);
+    apiKeyStore = new ApiKeyStore();
   }
 
-  function getSortedFilters(): AuthFilter[] {
-    return [...filters].sort((a, b) => b.priority - a.priority);
-  }
+  // Filter-based authorization system — persisted to Mongo if `mongoUri` is set,
+  // otherwise kept in memory. The store maintains an in-memory cache used by
+  // `isIdAuthorized`, so the hot path never hits the DB.
+  const filterStore = new FilterStore({
+    useMongo: !!options.mongoUri,
+    defaultFilters: options.defaultFilters,
+  });
 
   // Tracks SSE-connected IDs and their watching clients
   const pendingTunnels = new Map<string, PendingTunnel>();
 
   function isIdAuthorized(tunnelId: string): boolean {
-    for (const filter of getSortedFilters()) {
-      if (filter.regex.test(tunnelId)) {
-        return filter.authorized;
-      }
-    }
-    // No filter matched → not authorized
-    return false;
+    return filterStore.isIdAuthorized(tunnelId);
   }
 
   /** Re-evaluate all pending IDs against current filters and notify SSE clients of changes */
@@ -123,6 +118,10 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
     });
   }
 
+  // When a temporary allow expires, the store flips the filter to deny and emits.
+  // We re-run the SSE notification + active-tunnel cleanup just like an admin change would.
+  filterStore.on("change", () => reEvaluateAllPending());
+
   function removeSseClient(sseClient: SseClient) {
     for (const id of sseClient.ids) {
       const pending = pendingTunnels.get(id);
@@ -141,13 +140,29 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
     return myTldjs.getSubdomain(hostname);
   }
 
-  function isUnauthorized(req: Request, res: Response): boolean {
-    if (!options.authKey) return false;
-    const key = req.headers["x-lt-auth"] as string | undefined;
-    if (key !== options.authKey) {
+  /**
+   * Verifies the `x-lt-auth` header against the API key store.
+   * On success, updates usage stats (fire-and-forget) and returns false.
+   * On failure, writes a 401/503 response and returns true.
+   */
+  async function isUnauthorized(req: Request, res: Response): Promise<boolean> {
+    if (!options.authRequired) return false;
+    if (!apiKeyStore || !apiKeyStore.connected) {
+      res.status(503).json({ error: "Auth backend not ready" });
+      return true;
+    }
+    const rawKey = req.headers["x-lt-auth"] as string | undefined;
+    if (!rawKey) {
       res.status(401).json({ error: "Unauthorized" });
       return true;
     }
+    const doc = await apiKeyStore.verify(rawKey);
+    if (!doc) {
+      res.status(401).json({ error: "Unauthorized" });
+      return true;
+    }
+    // Update lastUsed / counter / lastIp in the background — don't block the request.
+    apiKeyStore.touch(doc._id, req.ip ?? null);
     return false;
   }
 
@@ -172,7 +187,7 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
   }
 
   function generateClientToken(): string | undefined {
-    if (!options.authKey) return undefined;
+    if (!options.authRequired) return undefined;
     return randomBytes(32).toString("hex");
   }
 
@@ -184,16 +199,16 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
 
   // ---------------- AUTHORIZATION FILTER API (admin) ----------------
 
-  // List all filters (sorted by priority)
+  // List all filters (sorted by priority desc)
   app.get("/api/filters", (req, res) => {
     if (isAdminUnauthorized(req, res)) return;
-    res.json(getSortedFilters().map((f) => ({ id: f.id, pattern: f.pattern, authorized: f.authorized, priority: f.priority })));
+    res.json(filterStore.list());
   });
 
   // Add a filter
-  app.post("/api/filters", (req, res) => {
+  app.post("/api/filters", async (req, res) => {
     if (isAdminUnauthorized(req, res)) return;
-    const { pattern, authorized, priority } = req.body;
+    const { pattern, authorized, priority, allowUntil } = req.body;
     if (typeof pattern !== "string" || !pattern.trim()) {
       res.status(400).json({ error: "Missing or invalid 'pattern'" });
       return;
@@ -202,60 +217,133 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
       res.status(400).json({ error: "Missing or invalid 'authorized' (boolean)" });
       return;
     }
-    const prio = typeof priority === "number" ? priority : 0;
     try {
-      const regex = new RegExp(pattern);
-      const filter: AuthFilter = { id: String(++filterIdCounter), pattern, regex, authorized, priority: prio };
-      filters.push(filter);
-      debug("Filter added: %s (authorized=%s, priority=%d)", pattern, authorized, prio);
+      const created = await filterStore.create({ pattern, authorized, priority, allowUntil });
+      if (!created) {
+        res.status(500).json({ error: "Failed to create filter" });
+        return;
+      }
+      debug("Filter added: %s (authorized=%s, priority=%d)", created.pattern, created.authorized, created.priority);
       reEvaluateAllPending();
-      res.status(201).json({ id: filter.id, pattern, authorized, priority: prio });
+      res.status(201).json(created);
     } catch (e: any) {
-      res.status(400).json({ error: `Invalid regex: ${e.message}` });
+      res.status(400).json({ error: e.message });
     }
   });
 
   // Update a filter
-  app.put("/api/filters/:filterId", (req, res) => {
+  app.put("/api/filters/:filterId", async (req, res) => {
     if (isAdminUnauthorized(req, res)) return;
-    const idx = filters.findIndex((f) => f.id === req.params.filterId);
-    if (idx === -1) {
-      res.status(404).json({ error: "Filter not found" });
-      return;
-    }
-    const { pattern, authorized, priority } = req.body;
     try {
-      if (typeof pattern === "string" && pattern.trim()) {
-        filters[idx].pattern = pattern;
-        filters[idx].regex = new RegExp(pattern);
+      const updated = await filterStore.update(req.params.filterId, req.body ?? {});
+      if (!updated) {
+        res.status(404).json({ error: "Filter not found" });
+        return;
       }
-      if (typeof authorized === "boolean") {
-        filters[idx].authorized = authorized;
-      }
-      if (typeof priority === "number") {
-        filters[idx].priority = priority;
-      }
-      debug("Filter %s updated", req.params.filterId);
+      debug("Filter %s updated", updated.id);
       reEvaluateAllPending();
-      const f = filters[idx];
-      res.json({ id: f.id, pattern: f.pattern, authorized: f.authorized, priority: f.priority });
+      res.json(updated);
     } catch (e: any) {
-      res.status(400).json({ error: `Invalid regex: ${e.message}` });
+      res.status(400).json({ error: e.message });
     }
   });
 
   // Delete a filter
-  app.delete("/api/filters/:filterId", (req, res) => {
+  app.delete("/api/filters/:filterId", async (req, res) => {
     if (isAdminUnauthorized(req, res)) return;
-    const idx = filters.findIndex((f) => f.id === req.params.filterId);
-    if (idx === -1) {
-      res.status(404).json({ error: "Filter not found" });
+    try {
+      const removed = await filterStore.delete(req.params.filterId);
+      if (!removed) {
+        res.status(404).json({ error: "Filter not found" });
+        return;
+      }
+      debug("Filter %s removed: %s", removed.id, removed.pattern);
+      reEvaluateAllPending();
+      res.json(removed);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // ---------------- API KEYS (admin) ----------------
+  // These routes manage keys that clients use in `x-lt-auth`. They're only
+  // meaningful when the server was started with `authRequired=true`.
+
+  function requireKeyStore(res: Response): ApiKeyStore | null {
+    if (!apiKeyStore) {
+      res.status(400).json({ error: "API keys are disabled (authRequired=false)" });
+      return null;
+    }
+    if (!apiKeyStore.connected) {
+      res.status(503).json({ error: "Auth backend not ready" });
+      return null;
+    }
+    return apiKeyStore;
+  }
+
+  // List all API keys (without the plaintext key or its hash)
+  app.get("/api/keys", async (req, res) => {
+    if (isAdminUnauthorized(req, res)) return;
+    const store = requireKeyStore(res);
+    if (!store) return;
+    try {
+      const keys = await store.list();
+      res.json(keys);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create a new API key — returns the plaintext key once, in the `key` field
+  app.post("/api/keys", async (req, res) => {
+    if (isAdminUnauthorized(req, res)) return;
+    const store = requireKeyStore(res);
+    if (!store) return;
+    const { name, expiresAt } = req.body ?? {};
+    if (typeof name !== "string" || !name.trim()) {
+      res.status(400).json({ error: "Missing or invalid 'name'" });
       return;
     }
-    const removed = filters.splice(idx, 1)[0];
-    debug("Filter %s removed: %s", removed.id, removed.pattern);
-    reEvaluateAllPending();
-    res.json({ id: removed.id, pattern: removed.pattern, authorized: removed.authorized, priority: removed.priority });
+    try {
+      const created = await store.create({ name, expiresAt: expiresAt ?? null });
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Update name / active / expiresAt
+  app.patch("/api/keys/:id", async (req, res) => {
+    if (isAdminUnauthorized(req, res)) return;
+    const store = requireKeyStore(res);
+    if (!store) return;
+    try {
+      const updated = await store.update(req.params.id, req.body ?? {});
+      if (!updated) {
+        res.status(404).json({ error: "Key not found" });
+        return;
+      }
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Delete a key
+  app.delete("/api/keys/:id", async (req, res) => {
+    if (isAdminUnauthorized(req, res)) return;
+    const store = requireKeyStore(res);
+    if (!store) return;
+    try {
+      const removed = await store.delete(req.params.id);
+      if (!removed) {
+        res.status(404).json({ error: "Key not found" });
+        return;
+      }
+      res.json(removed);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   // List pending tunnel IDs with their current authorization status and socket count
@@ -291,8 +379,8 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
     res.json(result);
   });
 
-  app.use((req, res, next) => {
-    if (isUnauthorized(req, res)) return;
+  app.use(async (req, res, next) => {
+    if (await isUnauthorized(req, res)) return;
     next();
   });
 
@@ -338,10 +426,24 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
 
     debug("SSE client connected for IDs: %s", ids.join(", "));
 
-    // Heartbeat to keep connection alive
+    // Heartbeat every 15s. Short enough to keep NAT/LB entries alive and to let
+    // the client detect a dead connection quickly (it times out after 45s of no data).
     const heartbeat = setInterval(() => {
-      res.write(": heartbeat\n\n");
-    }, 30000);
+      try {
+        res.write(": heartbeat\n\n");
+      } catch (e) {
+        debug("SSE heartbeat write failed: %s", (e as Error).message);
+        clearInterval(heartbeat);
+        removeSseClient(sseClient);
+        try { res.end(); } catch (_) {}
+      }
+    }, 15000);
+
+    res.on("error", (err) => {
+      debug("SSE response error: %s", err.message);
+      clearInterval(heartbeat);
+      removeSseClient(sseClient);
+    });
 
     req.on("close", () => {
       debug("SSE client disconnected");
@@ -522,11 +624,21 @@ export function createTunnelInstance(options: TunnelServerOptions = {}): TunnelS
 
   debug("LocalTunnel attached");
 
+  async function ready() {
+    if (options.mongoUri) {
+      await connectMongo(options.mongoUri);
+    }
+    await filterStore.init();
+  }
+
   return {
     server,
     getClients() {
       return Array.from(manager.clients.keys());
     },
+    apiKeyStore,
+    filterStore,
+    ready,
   };
 }
 

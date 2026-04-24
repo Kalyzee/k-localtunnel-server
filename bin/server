@@ -43,9 +43,13 @@ const argv = optimist
         default: getEnvVar('LANDING'),
         describe: 'Specify the landing page',
     })
-    .options('auth-key', {
-        default: getEnvVar('AUTH_KEY'),
-        describe: 'Specify the client\'s authentication key. If not defined, no authentication is required.',
+    .options('auth-required', {
+        default: getEnvVar('AUTH_REQUIRED') === 'true',
+        describe: 'If true, clients must present a valid API key via x-lt-auth. Requires --mongo-uri.',
+    })
+    .options('mongo-uri', {
+        default: getEnvVar('MONGO_URI'),
+        describe: 'MongoDB connection string for the API key store. Required when --auth-required=true.',
     })
     .options('admin-username', {
         default: getEnvVar('ADMIN_USERNAME'),
@@ -95,20 +99,30 @@ const params = {
     secure: argv.secure,
     domain: argv.domain,
     landing: argv.landing,
-    authKey: argv['auth-key'],
+    authRequired: argv['auth-required'],
+    mongoUri: argv['mongo-uri'],
     adminUsername: argv['admin-username'],
     adminPassword: argv['admin-password'],
     defaultFilters: argv['default-filters'] ? JSON.parse(argv['default-filters']) : undefined,
     uniquePortTcpServer: argv['unique-port-tcp-server'],
 };
-debug("Server params : ", JSON.stringify(params, null, 2));
+// Don't log mongoUri directly — it may contain credentials.
+debug("Server params : ", JSON.stringify({ ...params, mongoUri: params.mongoUri ? '***' : undefined }, null, 2));
 
 const tunnelInstance = createTunnelInstance(params);
 const server = tunnelInstance.server;
 
 const port = argv['port'];
 const address = argv['addresse'];
-debug("Prepare server to listen on : ", port, ' / ', address)
+debug("Prepare server to listen on : ", port, ' / ', address);
+
+try {
+    await tunnelInstance.ready();
+} catch (err) {
+    log.error('Failed to initialize tunnel server:', err.message);
+    process.exit(1);
+}
+
 server.listen(port, address, () => {
     debug('server listening on port: %d', server.address().port);
 });
